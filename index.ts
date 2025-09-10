@@ -49,6 +49,9 @@ class GoogleFormAgent {
   }
 
   async extractFormFields(page: Page): Promise<FormField[]> {
+    // Wait for Google Forms to load
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    
     return await page.evaluate(() => {
       const fields: FormField[] = [];
       
@@ -102,84 +105,103 @@ class GoogleFormAgent {
         return findLabelForInput(input);
       }
       
-      // Wait a bit for Google Forms to load
-      setTimeout(() => {
-        // Extract text inputs - try multiple selectors for Google Forms
-        const textInputs = document.querySelectorAll('input[type="text"], input[type="email"], input[type="tel"], textarea, input:not([type]), [role="textbox"]');
-        console.log('Text inputs found:', textInputs.length);
+      // Extract Google Forms specific elements
+      // Look for Google Forms question containers
+      const questionContainers = document.querySelectorAll('[data-params*="question"], .freebirdFormviewerViewItemsItemItem, .m2');
+      console.log('Question containers found:', questionContainers.length);
+      
+      questionContainers.forEach((container: Element, containerIndex: number) => {
+        // Find the question text
+        const questionText = container.querySelector('.freebirdFormviewerViewItemsItemItemTitle, .m7, h1, h2, h3, h4, h5, h6')?.textContent?.trim() || `Question ${containerIndex + 1}`;
+        console.log(`Processing question: ${questionText}`);
         
-        textInputs.forEach((input: Element, index: number) => {
-          const label = findLabelForInput(input);
-          console.log(`Text input ${index}:`, label, input);
-          fields.push({
-            type: input.tagName.toLowerCase() === 'textarea' ? 'textarea' : 'text',
-            label: label,
-            name: (input as HTMLInputElement).name || `field_${index}`,
-            required: (input as HTMLInputElement).required,
-            element: input
-          });
-        });
-
-        // Extract radio buttons
-        const radioGroups = new Map<string, any>();
-        const radioInputs = document.querySelectorAll('input[type="radio"]');
-        console.log('Radio inputs found:', radioInputs.length);
-        
-        radioInputs.forEach((input: Element) => {
-          const name = (input as HTMLInputElement).name;
-          const label = findLabelForInput(input);
-          const value = (input as HTMLInputElement).value;
+        // Look for radio buttons in this container
+        const radioInputs = container.querySelectorAll('input[type="radio"]');
+        if (radioInputs.length > 0) {
+          const radioGroup = {
+            type: 'radio',
+            label: questionText,
+            name: `question_${containerIndex}`,
+            required: false,
+            options: [],
+            element: radioInputs[0]
+          };
           
-          if (!radioGroups.has(name)) {
-            radioGroups.set(name, {
-              type: 'radio',
-              label: findGroupLabel(input),
-              name: name,
-              required: (input as HTMLInputElement).required,
-              options: [],
-              element: input
-            });
-          }
-          radioGroups.get(name)!.options.push(value || label);
-        });
+          radioInputs.forEach((input: Element) => {
+            const optionText = input.closest('label')?.textContent?.trim() || 
+                              input.getAttribute('aria-label') || 
+                              (input as HTMLInputElement).value || 
+                              'Option';
+            radioGroup.options.push(optionText);
+          });
+          
+          fields.push(radioGroup);
+          console.log(`Added radio group: ${questionText} with ${radioGroup.options.length} options`);
+        }
         
-        radioGroups.forEach(group => fields.push(group));
-
-        // Extract checkboxes
-        const checkboxes = document.querySelectorAll('input[type="checkbox"]');
-        console.log('Checkboxes found:', checkboxes.length);
-        
-        checkboxes.forEach((input: Element, index: number) => {
-          const label = findLabelForInput(input);
+        // Look for checkboxes in this container
+        const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+        checkboxes.forEach((checkbox: Element, checkboxIndex: number) => {
+          const checkboxText = checkbox.closest('label')?.textContent?.trim() || 
+                              checkbox.getAttribute('aria-label') || 
+                              `Checkbox ${checkboxIndex + 1}`;
           fields.push({
             type: 'checkbox',
-            label: label,
-            name: (input as HTMLInputElement).name || `checkbox_${index}`,
+            label: `${questionText} - ${checkboxText}`,
+            name: `question_${containerIndex}_checkbox_${checkboxIndex}`,
+            required: false,
+            element: checkbox
+          });
+        });
+        
+        // Look for text inputs in this container
+        const textInputs = container.querySelectorAll('input[type="text"], input[type="email"], input[type="tel"], textarea, input:not([type])');
+        textInputs.forEach((input: Element, inputIndex: number) => {
+          fields.push({
+            type: input.tagName.toLowerCase() === 'textarea' ? 'textarea' : 'text',
+            label: questionText,
+            name: `question_${containerIndex}_text_${inputIndex}`,
             required: (input as HTMLInputElement).required,
             element: input
           });
         });
-
-        // Extract dropdowns
-        const selects = document.querySelectorAll('select');
-        console.log('Selects found:', selects.length);
         
-        selects.forEach((select: Element, index: number) => {
+        // Look for dropdowns in this container
+        const selects = container.querySelectorAll('select');
+        selects.forEach((select: Element, selectIndex: number) => {
           const options = Array.from((select as HTMLSelectElement).options).map((option: HTMLOptionElement) => option.text);
-          const label = findLabelForInput(select);
           fields.push({
             type: 'select',
-            label: label,
-            name: (select as HTMLSelectElement).name || `select_${index}`,
+            label: questionText,
+            name: `question_${containerIndex}_select_${selectIndex}`,
             required: (select as HTMLSelectElement).required,
             options: options,
             element: select
           });
         });
+      });
 
-        console.log('Total fields extracted:', fields.length);
-      }, 2000); // Wait 2 seconds for Google Forms to load
+      // Fallback: Extract any remaining inputs not in question containers
+      const allInputs = document.querySelectorAll('input[type="text"], input[type="email"], input[type="tel"], textarea, input:not([type])');
+      console.log('Fallback inputs found:', allInputs.length);
+      
+      allInputs.forEach((input: Element, index: number) => {
+        // Skip if already processed in question containers
+        if (input.closest('[data-params*="question"], .freebirdFormviewerViewItemsItemItem, .m2')) return;
+        
+        const label = findLabelForInput(input);
+        console.log(`Fallback text input ${index}:`, label, input);
+        fields.push({
+          type: input.tagName.toLowerCase() === 'textarea' ? 'textarea' : 'text',
+          label: label,
+          name: (input as HTMLInputElement).name || `field_${index}`,
+          required: (input as HTMLInputElement).required,
+          element: input
+        });
+      });
 
+
+      console.log('Total fields extracted:', fields.length);
       return fields;
     });
   }
@@ -275,39 +297,19 @@ Respond only with the JSON object, no additional text.
           case 'radio':
             if (field.options && field.options.includes(String(value))) {
               await page.evaluate((fieldLabel: string, fieldValue: string) => {
-                function findLabelText(el: Element): string {
-                  const id = el.getAttribute('id');
-                  if (id) {
-                    const label = document.querySelector(`label[for="${id}"]`);
-                    if (label) return label.textContent?.trim() || '';
-                  }
-                  const parentLabel = el.closest('label');
-                  if (parentLabel) {
-                    return parentLabel.textContent?.trim() || '';
-                  }
-                  const ariaLabel = el.getAttribute('aria-label');
-                  if (ariaLabel) return ariaLabel;
-                  return 'Unknown field';
-                }
-                
-                function findGroupLabelText(el: Element): string {
-                  const container = el.closest('[role="group"], .form-group, .question-group');
-                  if (container) {
-                    const heading = container.querySelector('h1, h2, h3, h4, h5, h6, .question-title');
-                    if (heading) return heading.textContent?.trim() || '';
-                  }
-                  return findLabelText(el);
-                }
-                
+                // Find radio buttons that match the field label and value
                 const radios = Array.from(document.querySelectorAll('input[type="radio"]'));
                 const radio = radios.find(el => {
-                  const label = findLabelText(el);
-                  const radioValue = (el as HTMLInputElement).value;
-                  return (label.includes(fieldValue) || radioValue === fieldValue) && 
-                         findGroupLabelText(el).includes(fieldLabel);
+                  const label = el.closest('label')?.textContent?.trim() || '';
+                  const container = el.closest('[data-params*="question"], .freebirdFormviewerViewItemsItemItem, .m2');
+                  const questionText = container?.querySelector('.freebirdFormviewerViewItemsItemItemTitle, .m7, h1, h2, h3, h4, h5, h6')?.textContent?.trim() || '';
+                  
+                  return (label.includes(fieldValue) || fieldValue.includes(label)) && 
+                         questionText.includes(fieldLabel);
                 });
                 if (radio) {
                   (radio as HTMLInputElement).click();
+                  console.log(`Selected radio option: ${fieldValue} for question: ${fieldLabel}`);
                 }
               }, field.label, String(value));
             }
@@ -398,6 +400,16 @@ Respond only with the JSON object, no additional text.
       console.log('Extracting form fields...');
       const fields = await this.extractFormFields(page);
       console.log(`Found ${fields.length} fields:`, fields.map(f => f.label));
+
+      if (fields.length === 0) {
+        console.log('No form fields found. This might be because:');
+        console.log('1. The form is not fully loaded yet');
+        console.log('2. The form requires authentication');
+        console.log('3. The form uses a different structure than expected');
+        console.log('4. The form URL is incorrect');
+        console.log('Please check the browser window to see the actual form.');
+        return;
+      }
 
       console.log('Generating form data using Gemini AI...');
       const formData = await this.generateFormData(fields, context);
