@@ -21,7 +21,7 @@ class GoogleFormAgent {
 
   constructor(geminiApiKey: string) {
     this.genAI = new GoogleGenerativeAI(geminiApiKey);
-    this.model = this.genAI.getGenerativeModel({ model: 'gemini-pro' });
+    this.model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
   }
 
   async initBrowser(): Promise<void> {
@@ -51,6 +51,12 @@ class GoogleFormAgent {
   async extractFormFields(page: Page): Promise<FormField[]> {
     return await page.evaluate(() => {
       const fields: FormField[] = [];
+      
+      // Debug: Log what we find on the page
+      console.log('Page title:', document.title);
+      console.log('All inputs found:', document.querySelectorAll('input').length);
+      console.log('All textareas found:', document.querySelectorAll('textarea').length);
+      console.log('All selects found:', document.querySelectorAll('select').length);
       
       // Helper functions defined inside page.evaluate
       function findLabelForInput(input: Element): string {
@@ -96,69 +102,83 @@ class GoogleFormAgent {
         return findLabelForInput(input);
       }
       
-      // Extract text inputs
-      const textInputs = document.querySelectorAll('input[type="text"], input[type="email"], input[type="tel"], textarea');
-      textInputs.forEach((input: Element, index: number) => {
-        const label = findLabelForInput(input);
-        fields.push({
-          type: input.tagName.toLowerCase() === 'textarea' ? 'textarea' : 'text',
-          label: label,
-          name: (input as HTMLInputElement).name || `field_${index}`,
-          required: (input as HTMLInputElement).required,
-          element: input
-        });
-      });
-
-      // Extract radio buttons
-      const radioGroups = new Map<string, any>();
-      const radioInputs = document.querySelectorAll('input[type="radio"]');
-      radioInputs.forEach((input: Element) => {
-        const name = (input as HTMLInputElement).name;
-        const label = findLabelForInput(input);
-        const value = (input as HTMLInputElement).value;
+      // Wait a bit for Google Forms to load
+      setTimeout(() => {
+        // Extract text inputs - try multiple selectors for Google Forms
+        const textInputs = document.querySelectorAll('input[type="text"], input[type="email"], input[type="tel"], textarea, input:not([type]), [role="textbox"]');
+        console.log('Text inputs found:', textInputs.length);
         
-        if (!radioGroups.has(name)) {
-          radioGroups.set(name, {
-            type: 'radio',
-            label: findGroupLabel(input),
-            name: name,
+        textInputs.forEach((input: Element, index: number) => {
+          const label = findLabelForInput(input);
+          console.log(`Text input ${index}:`, label, input);
+          fields.push({
+            type: input.tagName.toLowerCase() === 'textarea' ? 'textarea' : 'text',
+            label: label,
+            name: (input as HTMLInputElement).name || `field_${index}`,
             required: (input as HTMLInputElement).required,
-            options: [],
             element: input
           });
-        }
-        radioGroups.get(name)!.options.push(value || label);
-      });
-      
-      radioGroups.forEach(group => fields.push(group));
-
-      // Extract checkboxes
-      const checkboxes = document.querySelectorAll('input[type="checkbox"]');
-      checkboxes.forEach((input: Element, index: number) => {
-        const label = findLabelForInput(input);
-        fields.push({
-          type: 'checkbox',
-          label: label,
-          name: (input as HTMLInputElement).name || `checkbox_${index}`,
-          required: (input as HTMLInputElement).required,
-          element: input
         });
-      });
 
-      // Extract dropdowns
-      const selects = document.querySelectorAll('select');
-      selects.forEach((select: Element, index: number) => {
-        const options = Array.from((select as HTMLSelectElement).options).map((option: HTMLOptionElement) => option.text);
-        const label = findLabelForInput(select);
-        fields.push({
-          type: 'select',
-          label: label,
-          name: (select as HTMLSelectElement).name || `select_${index}`,
-          required: (select as HTMLSelectElement).required,
-          options: options,
-          element: select
+        // Extract radio buttons
+        const radioGroups = new Map<string, any>();
+        const radioInputs = document.querySelectorAll('input[type="radio"]');
+        console.log('Radio inputs found:', radioInputs.length);
+        
+        radioInputs.forEach((input: Element) => {
+          const name = (input as HTMLInputElement).name;
+          const label = findLabelForInput(input);
+          const value = (input as HTMLInputElement).value;
+          
+          if (!radioGroups.has(name)) {
+            radioGroups.set(name, {
+              type: 'radio',
+              label: findGroupLabel(input),
+              name: name,
+              required: (input as HTMLInputElement).required,
+              options: [],
+              element: input
+            });
+          }
+          radioGroups.get(name)!.options.push(value || label);
         });
-      });
+        
+        radioGroups.forEach(group => fields.push(group));
+
+        // Extract checkboxes
+        const checkboxes = document.querySelectorAll('input[type="checkbox"]');
+        console.log('Checkboxes found:', checkboxes.length);
+        
+        checkboxes.forEach((input: Element, index: number) => {
+          const label = findLabelForInput(input);
+          fields.push({
+            type: 'checkbox',
+            label: label,
+            name: (input as HTMLInputElement).name || `checkbox_${index}`,
+            required: (input as HTMLInputElement).required,
+            element: input
+          });
+        });
+
+        // Extract dropdowns
+        const selects = document.querySelectorAll('select');
+        console.log('Selects found:', selects.length);
+        
+        selects.forEach((select: Element, index: number) => {
+          const options = Array.from((select as HTMLSelectElement).options).map((option: HTMLOptionElement) => option.text);
+          const label = findLabelForInput(select);
+          fields.push({
+            type: 'select',
+            label: label,
+            name: (select as HTMLSelectElement).name || `select_${index}`,
+            required: (select as HTMLSelectElement).required,
+            options: options,
+            element: select
+          });
+        });
+
+        console.log('Total fields extracted:', fields.length);
+      }, 2000); // Wait 2 seconds for Google Forms to load
 
       return fields;
     });
