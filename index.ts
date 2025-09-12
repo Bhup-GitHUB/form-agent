@@ -118,12 +118,12 @@ class GoogleFormAgent {
         // Look for radio buttons in this container
         const radioInputs = container.querySelectorAll('input[type="radio"]');
         if (radioInputs.length > 0) {
-          const radioGroup = {
+          const radioGroup: FormField = {
             type: 'radio',
             label: questionText,
             name: `question_${containerIndex}`,
             required: false,
-            options: [],
+            options: [] as string[],
             element: radioInputs[0]
           };
           
@@ -132,11 +132,11 @@ class GoogleFormAgent {
                               input.getAttribute('aria-label') || 
                               (input as HTMLInputElement).value || 
                               'Option';
-            radioGroup.options.push(optionText);
+            radioGroup.options!.push(optionText);
           });
           
           fields.push(radioGroup);
-          console.log(`Added radio group: ${questionText} with ${radioGroup.options.length} options`);
+          console.log(`Added radio group: ${questionText} with ${radioGroup.options!.length} options`);
         }
         
         // Look for checkboxes in this container
@@ -455,6 +455,12 @@ async function main() {
 }
 
 // Uncomment to run
-main();
+if (process.env.GEMINI_API_KEY) {
+  main();
+} else {
+  console.log('GoogleFormAgent is ready to use!');
+  console.log('Set GEMINI_API_KEY environment variable and uncomment the main() call to run the example.');
+  console.log('Usage: GEMINI_API_KEY=your_key_here bun run index.ts');
+}
 
 export { GoogleFormAgent };
